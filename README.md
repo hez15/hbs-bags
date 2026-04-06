@@ -245,11 +245,11 @@ All critical operations are **server-authoritative**:
 
 ### Anti Bag-in-Bag
 
-Backpack items are **blocked from entering any non-player inventory**:
+Backpack items **can** be stored in normal stashes (house, trunk, etc.) but are **blocked from entering other backpack stashes**:
 
-- ox_inventory `swapItems` hook checks if the moved item is a backpack
-- If destination is a stash, container, drop, or another player's backpack stash → **blocked**
-- This covers drag/drop, swap, give, and stash transfers
+- ox_inventory `swapItems` hook checks if the destination is a backpack stash
+- If destination inventory ID starts with the backpack stash prefix → **blocked**
+- Normal stashes, trunks, and containers are allowed
 - Enforced entirely server-side via ox_inventory hooks
 
 ## Troubleshooting

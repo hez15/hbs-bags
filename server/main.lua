@@ -164,23 +164,15 @@ for itemName, _ in pairs(Config.BackpackItems) do
 end
 
 ---------------------------------------------------------------------------
--- ANTI BAG-IN-BAG: Block backpack items from entering any stash/container
+-- ANTI BAG-IN-BAG: Block backpacks from entering other backpack stashes
+-- Backpacks CAN be placed into normal stashes (house, trunk, etc.)
 ---------------------------------------------------------------------------
 
--- Hook into swapItems to prevent backpacks going into non-player inventories
 ox_inventory:RegisterHook('swapItems', function(payload)
     -- Check if the moved item is a backpack
     local itemName = payload.fromSlot and payload.fromSlot.name
-    if not itemName then return true end
-
-    if Config.BackpackItems[itemName] then
-        -- Allow if destination is a player inventory
-        local toType = payload.toType
-        if toType ~= 'player' then
-            return false -- Block: backpack cannot go into stash/container/drop
-        end
-
-        -- Also block if destination inventory is a backpack stash
+    if itemName and Config.BackpackItems[itemName] then
+        -- Only block if destination is a backpack stash
         local toInv = payload.toInventory
         if type(toInv) == 'string' and toInv:find('^' .. Config.StashPrefix) then
             return false
@@ -190,10 +182,6 @@ ox_inventory:RegisterHook('swapItems', function(payload)
     -- Check the reverse direction for swaps
     local toItemName = payload.toSlot and payload.toSlot.name
     if toItemName and Config.BackpackItems[toItemName] then
-        local fromType = payload.fromType
-        if fromType ~= 'player' then
-            return false
-        end
         local fromInv = payload.fromInventory
         if type(fromInv) == 'string' and fromInv:find('^' .. Config.StashPrefix) then
             return false
