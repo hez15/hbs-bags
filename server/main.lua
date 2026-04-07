@@ -394,6 +394,19 @@ lib.callback.register('hbs-bags:server:openStash', function(source, slot)
         return false, 'This backpack is broken. Repair it first.'
     end
 
+    -- Reduce durability on each stash open
+    if Config.DurabilityLoss and Config.DurabilityLoss > 0 then
+        meta.durability = math.max(0, (meta.durability or 100) - Config.DurabilityLoss)
+        meta.description = ('Type: %s | Durability: %d%%'):format(
+            meta.backpackType or item.name,
+            meta.durability
+        )
+        if meta.customName then
+            meta.description = meta.description .. (' | Name: %s'):format(meta.customName)
+        end
+        exports.ox_inventory:SetMetadata(src, slot, meta)
+    end
+
     registerStash(meta.backpackId, meta.backpackType or item.name, meta.upgrades or {})
 
     local stashId = Config.StashPrefix .. meta.backpackId

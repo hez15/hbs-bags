@@ -54,6 +54,9 @@ Config.Repair = {
     amount = 25,                -- durability restored per repair
 }
 
+-- Durability loss per stash open
+Config.DurabilityLoss = 1
+
 -- Upgrade items and their effects
 Config.Upgrades = {
     reinforced_fabric = {
