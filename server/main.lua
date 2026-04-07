@@ -237,7 +237,7 @@ exports('useBackpack', function(event, item, inventory, slot, data)
         return notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
     end
 
-    -- Auto-equip if not already equipped, then open stash
+    -- Auto-equip if not already equipped, then show menu
     local current = equippedBags[src]
     local backpackType = meta.backpackType or invItem.name
 
@@ -255,17 +255,11 @@ exports('useBackpack', function(event, item, inventory, slot, data)
         }
         registerStash(meta.backpackId, backpackType, meta.upgrades or {})
 
-        local stashId = Config.StashPrefix .. meta.backpackId
-        TriggerClientEvent('hbs-bags:client:equipAndOpen', src, itemSlot, backpackType, stashId)
-
-    elseif current.backpackId == meta.backpackId then
-        -- Already wearing this bag — just open stash
-        registerStash(meta.backpackId, backpackType, meta.upgrades or {})
-        local stashId = Config.StashPrefix .. meta.backpackId
-        TriggerClientEvent('hbs-bags:client:openStash', src, stashId)
+        -- Tell client to apply visuals then show menu
+        TriggerClientEvent('hbs-bags:client:equipAndMenu', src, itemSlot, backpackType, meta)
 
     else
-        -- Wearing a different bag — show menu to let them manage
+        -- Already equipped (same or different bag) — just show menu
         TriggerClientEvent('hbs-bags:client:openMenu', src, itemSlot, meta)
     end
 end)

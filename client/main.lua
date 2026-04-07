@@ -120,16 +120,14 @@ RegisterNetEvent('hbs-bags:client:forceUnequip', function()
 end)
 
 ---------------------------------------------------------------------------
--- STASH
+-- STASH / EQUIP EVENTS
 ---------------------------------------------------------------------------
 
---- Open a stash by ID (called from server directly)
-RegisterNetEvent('hbs-bags:client:openStash', function(stashId)
-    exports.ox_inventory:openInventory('stash', stashId)
-end)
+-- Forward declaration (defined further below after menu helper functions)
+local openBackpackMenu
 
---- Equip visuals + open stash in one action (called on first use)
-RegisterNetEvent('hbs-bags:client:equipAndOpen', function(slot, backpackType, stashId)
+--- Equip visuals + open menu in one action (called on first use)
+RegisterNetEvent('hbs-bags:client:equipAndMenu', function(slot, backpackType, metadata)
     saveClothing()
     applyBagClothing(backpackType)
 
@@ -138,9 +136,8 @@ RegisterNetEvent('hbs-bags:client:equipAndOpen', function(slot, backpackType, st
     TriggerServerEvent('hbs-bags:server:syncVisual', backpackType, true)
     lib.notify({ title = 'Backpack', description = 'Backpack equipped.', type = 'success' })
 
-    -- Small delay so the equip notification shows before inventory opens
     Wait(300)
-    exports.ox_inventory:openInventory('stash', stashId)
+    openBackpackMenu(slot, metadata)
 end)
 
 --- Open stash from menu
@@ -278,7 +275,7 @@ end
 
 ---@param slot number
 ---@param metadata table
-local function openBackpackMenu(slot, metadata)
+openBackpackMenu = function(slot, metadata)
     local menuOptions = {}
 
     -- Open Backpack (stash)
