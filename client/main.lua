@@ -41,7 +41,7 @@ local function saveClothing()
     }
 end
 
---- Apply bag clothing visually using illenium-appearance compatible method
+--- Apply bag clothing visually
 ---@param backpackType string
 local function applyBagClothing(backpackType)
     local cfg = Config.Backpacks[backpackType]
@@ -49,31 +49,26 @@ local function applyBagClothing(backpackType)
 
     local gender = getGender()
     local clothes = gender == 'male' and cfg.male or cfg.female
-
-    -- Use illenium-appearance's setPedAppearance for networked sync
-    -- This ensures ALL players see the change, not just local
     local ped = cache.ped
 
-    -- Set the component variation (component 5 = bags)
+    -- SetPedComponentVariation on the local player ped is automatically
+    -- networked to other clients by GTA for the owning player's ped.
     SetPedComponentVariation(ped, Config.BagComponent, clothes.drawable, clothes.texture, 0)
 
-    -- Use illenium-appearance export to persist and network the change
-    -- This triggers a full appearance update that syncs to all clients
-    local currentAppearance = exports['illenium-appearance']:getPedAppearance(ped)
-    if currentAppearance then
-        if currentAppearance.components then
-            -- Update the bag component in the appearance data
-            for _, comp in ipairs(currentAppearance.components) do
+    -- Also try illenium-appearance to persist across clothing changes/respawns
+    pcall(function()
+        local appearance = exports['illenium-appearance']:getPedAppearance(ped)
+        if appearance and appearance.components then
+            for _, comp in ipairs(appearance.components) do
                 if comp.component_id == Config.BagComponent then
                     comp.drawable = clothes.drawable
                     comp.texture = clothes.texture
                     break
                 end
             end
+            exports['illenium-appearance']:setPedAppearance(ped, appearance)
         end
-        -- Apply the full appearance which networks automatically via illenium-appearance
-        exports['illenium-appearance']:setPedAppearance(ped, currentAppearance)
-    end
+    end)
 end
 
 --- Remove bag clothing and restore previous
@@ -81,25 +76,23 @@ local function removeBagClothing()
     local ped = cache.ped
     local gender = getGender()
     local defaults = Config.DefaultClothing[gender]
-
     local restore = previousClothing or defaults
 
     SetPedComponentVariation(ped, Config.BagComponent, restore.drawable, restore.texture, 0)
 
-    -- Sync via illenium-appearance
-    local currentAppearance = exports['illenium-appearance']:getPedAppearance(ped)
-    if currentAppearance then
-        if currentAppearance.components then
-            for _, comp in ipairs(currentAppearance.components) do
+    pcall(function()
+        local appearance = exports['illenium-appearance']:getPedAppearance(ped)
+        if appearance and appearance.components then
+            for _, comp in ipairs(appearance.components) do
                 if comp.component_id == Config.BagComponent then
                     comp.drawable = restore.drawable
                     comp.texture = restore.texture
                     break
                 end
             end
+            exports['illenium-appearance']:setPedAppearance(ped, appearance)
         end
-        exports['illenium-appearance']:setPedAppearance(ped, currentAppearance)
-    end
+    end)
 
     previousClothing = nil
 end

@@ -206,9 +206,26 @@ end
 ---------------------------------------------------------------------------
 
 exports('useBackpack', function(event, item, inventory, slot, data)
-    local src = inventory.id or source
+    -- Handle different ox_inventory callback signatures
+    local src
 
-    if not item or not Config.BackpackItems[item.name] then return end
+    if type(inventory) == 'table' then
+        src = inventory.id or inventory
+    elseif type(inventory) == 'number' then
+        src = inventory
+    else
+        src = source
+    end
+
+    if type(src) ~= 'number' or src <= 0 then return end
+
+    -- item.name may be directly available or nested
+    local itemName = type(item) == 'table' and item.name or nil
+    if not itemName or not Config.BackpackItems[itemName] then return end
+
+    -- slot might come from item.slot if the slot param is nil
+    local itemSlot = slot or (type(item) == 'table' and item.slot) or nil
+    if not itemSlot then return end
 
     if isLocked(src) then
         return notify(src, { title = 'Backpack', description = 'Please wait...', type = 'error' })
@@ -216,20 +233,20 @@ exports('useBackpack', function(event, item, inventory, slot, data)
     setLock(src)
 
     -- Validate item still exists at slot
-    local invItem = getItemAtSlot(src, slot)
+    local invItem = getItemAtSlot(src, itemSlot)
     if not invItem or not Config.BackpackItems[invItem.name] then
         return notify(src, { title = 'Backpack', description = 'Item not found.', type = 'error' })
     end
 
     -- Ensure metadata is complete
-    local meta = ensureMetadata(src, slot, invItem)
+    local meta = ensureMetadata(src, itemSlot, invItem)
 
     if not meta.backpackId then
         return notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
     end
 
     -- Send to client to open context menu
-    TriggerClientEvent('hbs-bags:client:openMenu', src, slot, meta)
+    TriggerClientEvent('hbs-bags:client:openMenu', src, itemSlot, meta)
 end)
 
 ---------------------------------------------------------------------------
