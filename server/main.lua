@@ -219,18 +219,11 @@ exports('useBackpack', function(event, item, inventory, slot, data)
 
     if type(src) ~= 'number' or src <= 0 then return end
 
-    -- item.name may be directly available or nested
     local itemName = type(item) == 'table' and item.name or nil
     if not itemName or not Config.BackpackItems[itemName] then return end
 
-    -- slot might come from item.slot if the slot param is nil
     local itemSlot = slot or (type(item) == 'table' and item.slot) or nil
     if not itemSlot then return end
-
-    if isLocked(src) then
-        return notify(src, { title = 'Backpack', description = 'Please wait...', type = 'error' })
-    end
-    setLock(src)
 
     -- Validate item still exists at slot
     local invItem = getItemAtSlot(src, itemSlot)
@@ -240,13 +233,41 @@ exports('useBackpack', function(event, item, inventory, slot, data)
 
     -- Ensure metadata is complete
     local meta = ensureMetadata(src, itemSlot, invItem)
-
     if not meta.backpackId then
         return notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
     end
 
-    -- Send to client to open context menu
-    TriggerClientEvent('hbs-bags:client:openMenu', src, itemSlot, meta)
+    -- Auto-equip if not already equipped, then open stash
+    local current = equippedBags[src]
+    local backpackType = meta.backpackType or invItem.name
+
+    if not current then
+        -- Durability check
+        if meta.durability and meta.durability <= 0 then
+            return notify(src, { title = 'Backpack', description = 'This backpack is broken. Repair it first.', type = 'error' })
+        end
+
+        -- Equip
+        equippedBags[src] = {
+            slot = itemSlot,
+            backpackId = meta.backpackId,
+            backpackType = backpackType,
+        }
+        registerStash(meta.backpackId, backpackType, meta.upgrades or {})
+
+        local stashId = Config.StashPrefix .. meta.backpackId
+        TriggerClientEvent('hbs-bags:client:equipAndOpen', src, itemSlot, backpackType, stashId)
+
+    elseif current.backpackId == meta.backpackId then
+        -- Already wearing this bag — just open stash
+        registerStash(meta.backpackId, backpackType, meta.upgrades or {})
+        local stashId = Config.StashPrefix .. meta.backpackId
+        TriggerClientEvent('hbs-bags:client:openStash', src, stashId)
+
+    else
+        -- Wearing a different bag — show menu to let them manage
+        TriggerClientEvent('hbs-bags:client:openMenu', src, itemSlot, meta)
+    end
 end)
 
 ---------------------------------------------------------------------------
@@ -336,51 +357,9 @@ end
 -- SERVER CALLBACKS
 ---------------------------------------------------------------------------
 
---- Equip backpack
-lib.callback.register('hbs-bags:server:equip', function(source, slot)
-    local src = source
-    if isLocked(src) then return false, 'Please wait...' end
-    setLock(src)
-
-    local item = getItemAtSlot(src, slot)
-    if not item or not Config.BackpackItems[item.name] then
-        return false, 'Invalid item.'
-    end
-
-    local meta = ensureMetadata(src, slot, item)
-
-    if not meta.backpackId then
-        return false, 'Invalid backpack metadata.'
-    end
-
-    if meta.durability and meta.durability <= 0 then
-        return false, 'This backpack is broken. Repair it first.'
-    end
-
-    local current = equippedBags[src]
-    if current then
-        if current.backpackId == meta.backpackId then
-            return false, 'This backpack is already equipped.'
-        end
-        return false, 'Unequip your current backpack first.'
-    end
-
-    equippedBags[src] = {
-        slot = slot,
-        backpackId = meta.backpackId,
-        backpackType = meta.backpackType or item.name,
-    }
-
-    registerStash(meta.backpackId, meta.backpackType or item.name, meta.upgrades or {})
-
-    return true, meta.backpackType or item.name
-end)
-
 --- Unequip backpack
 lib.callback.register('hbs-bags:server:unequip', function(source)
     local src = source
-    if isLocked(src) then return false, 'Please wait...' end
-    setLock(src)
 
     local current = equippedBags[src]
     if not current then
@@ -402,11 +381,9 @@ lib.callback.register('hbs-bags:server:unequip', function(source)
     return true, nil
 end)
 
---- Open stash
+--- Open stash (from menu)
 lib.callback.register('hbs-bags:server:openStash', function(source, slot)
     local src = source
-    if isLocked(src) then return false, 'Please wait...' end
-    setLock(src)
 
     local item = getItemAtSlot(src, slot)
     if not item or not Config.BackpackItems[item.name] then
@@ -433,8 +410,6 @@ end)
 lib.callback.register('hbs-bags:server:rename', function(source, slot, newName)
     local src = source
     if not Config.Rename.enabled then return false, 'Renaming is disabled.' end
-    if isLocked(src) then return false, 'Please wait...' end
-    setLock(src)
 
     local item = getItemAtSlot(src, slot)
     if not item or not Config.BackpackItems[item.name] then
@@ -466,8 +441,6 @@ end)
 lib.callback.register('hbs-bags:server:repair', function(source, slot)
     local src = source
     if not Config.Repair.enabled then return false, 'Repair is disabled.' end
-    if isLocked(src) then return false, 'Please wait...' end
-    setLock(src)
 
     local item = getItemAtSlot(src, slot)
     if not item or not Config.BackpackItems[item.name] then
@@ -509,8 +482,6 @@ end)
 --- Upgrade backpack
 lib.callback.register('hbs-bags:server:upgrade', function(source, slot, upgradeKey)
     local src = source
-    if isLocked(src) then return false, 'Please wait...' end
-    setLock(src)
 
     local upgradeCfg = Config.Upgrades[upgradeKey]
     if not upgradeCfg then

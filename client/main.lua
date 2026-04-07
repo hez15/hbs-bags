@@ -4,22 +4,10 @@
 
 local equippedBackpack = nil     -- { slot = n, backpackId = "...", backpackType = "..." }
 local previousClothing = nil     -- { drawable = n, texture = n } saved before equip
-local lastAction = 0             -- anti-spam timestamp
 
 ---------------------------------------------------------------------------
 -- HELPERS
 ---------------------------------------------------------------------------
-
---- Check client-side cooldown
----@return boolean
-local function onCooldown()
-    local now = GetGameTimer()
-    if (now - lastAction) < Config.ActionCooldown then
-        return true
-    end
-    lastAction = now
-    return false
-end
 
 --- Get player gender string
 ---@return string 'male'|'female'
@@ -51,8 +39,8 @@ local function applyBagClothing(backpackType)
     local clothes = gender == 'male' and cfg.male or cfg.female
     local ped = cache.ped
 
-    -- SetPedComponentVariation on the local player ped is automatically
-    -- networked to other clients by GTA for the owning player's ped.
+    -- SetPedComponentVariation on the owning player's ped is automatically
+    -- networked to other clients by GTA.
     SetPedComponentVariation(ped, Config.BagComponent, clothes.drawable, clothes.texture, 0)
 
     -- Also try illenium-appearance to persist across clothing changes/respawns
@@ -101,31 +89,8 @@ end
 -- EQUIP / UNEQUIP
 ---------------------------------------------------------------------------
 
---- Equip a backpack
----@param slot number
-local function equipBackpack(slot)
-    if onCooldown() then return end
-
-    local success, result = lib.callback.await('hbs-bags:server:equip', false, slot)
-    if not success then
-        return lib.notify({ title = 'Backpack', description = result or 'Failed to equip.', type = 'error' })
-    end
-
-    local backpackType = result
-    saveClothing()
-    applyBagClothing(backpackType)
-
-    equippedBackpack = { slot = slot, backpackType = backpackType }
-
-    -- Broadcast visual to all players via server
-    TriggerServerEvent('hbs-bags:server:syncVisual', backpackType, true)
-
-    lib.notify({ title = 'Backpack', description = 'Backpack equipped.', type = 'success' })
-end
-
 --- Unequip the current backpack
 local function unequipBackpack()
-    if onCooldown() then return end
     if not equippedBackpack then
         return lib.notify({ title = 'Backpack', description = 'No backpack equipped.', type = 'error' })
     end
@@ -139,9 +104,7 @@ local function unequipBackpack()
     removeBagClothing()
     equippedBackpack = nil
 
-    -- Broadcast visual removal to all players
     TriggerServerEvent('hbs-bags:server:syncVisual', prevType, false)
-
     lib.notify({ title = 'Backpack', description = 'Backpack unequipped.', type = 'success' })
 end
 
@@ -160,17 +123,34 @@ end)
 -- STASH
 ---------------------------------------------------------------------------
 
---- Open the backpack stash
+--- Open a stash by ID (called from server directly)
+RegisterNetEvent('hbs-bags:client:openStash', function(stashId)
+    exports.ox_inventory:openInventory('stash', stashId)
+end)
+
+--- Equip visuals + open stash in one action (called on first use)
+RegisterNetEvent('hbs-bags:client:equipAndOpen', function(slot, backpackType, stashId)
+    saveClothing()
+    applyBagClothing(backpackType)
+
+    equippedBackpack = { slot = slot, backpackType = backpackType }
+
+    TriggerServerEvent('hbs-bags:server:syncVisual', backpackType, true)
+    lib.notify({ title = 'Backpack', description = 'Backpack equipped.', type = 'success' })
+
+    -- Small delay so the equip notification shows before inventory opens
+    Wait(300)
+    exports.ox_inventory:openInventory('stash', stashId)
+end)
+
+--- Open stash from menu
 ---@param slot number
 local function openStash(slot)
-    if onCooldown() then return end
-
     local success, result = lib.callback.await('hbs-bags:server:openStash', false, slot)
     if not success then
         return lib.notify({ title = 'Backpack', description = result or 'Failed to open stash.', type = 'error' })
     end
 
-    -- result = stashId
     exports.ox_inventory:openInventory('stash', result)
 end
 
@@ -207,7 +187,6 @@ local function repairBackpack(slot)
     if not Config.Repair.enabled then
         return lib.notify({ title = 'Backpack', description = 'Repair is disabled.', type = 'error' })
     end
-    if onCooldown() then return end
 
     local success, result = lib.callback.await('hbs-bags:server:repair', false, slot)
     if not success then
@@ -223,9 +202,6 @@ end
 
 ---@param slot number
 local function upgradeBackpack(slot)
-    if onCooldown() then return end
-
-    -- Build upgrade options from config
     local options = {}
     for key, cfg in pairs(Config.Upgrades) do
         options[#options + 1] = { value = key, label = cfg.label }
@@ -235,7 +211,6 @@ local function upgradeBackpack(slot)
         return lib.notify({ title = 'Backpack', description = 'No upgrades available.', type = 'error' })
     end
 
-    -- If only one upgrade type, use it directly
     local upgradeKey
     if #options == 1 then
         upgradeKey = options[1].value
@@ -271,7 +246,6 @@ local function inspectBackpack(slot)
         return lib.notify({ title = 'Backpack', description = err or 'Failed to inspect.', type = 'error' })
     end
 
-    -- Build upgrade text
     local upgradeLines = {}
     for key, count in pairs(info.upgrades or {}) do
         local cfg = Config.Upgrades[key]
@@ -298,15 +272,13 @@ end
 
 ---------------------------------------------------------------------------
 -- CONTEXT MENU (ox_lib)
+-- Only shown when player is wearing a DIFFERENT bag and uses another one.
+-- Normal flow: use item → auto equip + open stash (no menu needed).
 ---------------------------------------------------------------------------
 
---- Open the backpack interaction menu
 ---@param slot number
 ---@param metadata table
 local function openBackpackMenu(slot, metadata)
-    local isEquipped = equippedBackpack and equippedBackpack.backpackType ~= nil
-    local isThisEquipped = equippedBackpack and metadata.backpackId and equippedBackpack.slot == slot
-
     local menuOptions = {}
 
     -- Open Backpack (stash)
@@ -319,23 +291,14 @@ local function openBackpackMenu(slot, metadata)
         end,
     }
 
-    -- Equip / Unequip
-    if isThisEquipped then
+    -- Unequip current bag
+    if equippedBackpack then
         menuOptions[#menuOptions + 1] = {
-            title = 'Unequip Backpack',
-            description = 'Remove backpack from your back',
+            title = 'Unequip Current Backpack',
+            description = 'Remove your currently equipped backpack',
             icon = 'arrow-down',
             onSelect = function()
                 unequipBackpack()
-            end,
-        }
-    else
-        menuOptions[#menuOptions + 1] = {
-            title = 'Equip Backpack',
-            description = 'Wear this backpack',
-            icon = 'arrow-up',
-            onSelect = function()
-                equipBackpack(slot)
             end,
         }
     end
@@ -398,7 +361,7 @@ local function openBackpackMenu(slot, metadata)
 end
 
 ---------------------------------------------------------------------------
--- EVENT: Server triggers menu open after item use
+-- EVENT: Server triggers menu (only when wearing a different bag)
 ---------------------------------------------------------------------------
 
 RegisterNetEvent('hbs-bags:client:openMenu', function(slot, metadata)
@@ -428,7 +391,6 @@ RegisterNetEvent('hbs-bags:client:applyVisual', function(playerId, backpackType,
         local clothes = gender == 'male' and cfg.male or cfg.female
         SetPedComponentVariation(targetPed, Config.BagComponent, clothes.drawable, clothes.texture, 0)
     else
-        -- Remove bag: set to default
         local gender
         local model = GetEntityModel(targetPed)
         if model == `mp_m_freemode_01` then
@@ -447,10 +409,8 @@ end)
 ---------------------------------------------------------------------------
 
 local function onPlayerLoaded()
-    -- Wait for server callbacks to be registered
     Wait(2000)
 
-    -- Safely attempt to restore equipped state
     local ok, data = pcall(lib.callback.await, 'hbs-bags:server:getEquipped', false)
     if ok and data then
         equippedBackpack = {
@@ -461,40 +421,16 @@ local function onPlayerLoaded()
         applyBagClothing(data.backpackType)
     end
 
-    -- Request all other players' visuals
     TriggerServerEvent('hbs-bags:server:requestAllVisuals')
 end
 
--- QBX Core player loaded event
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', onPlayerLoaded)
 
--- Also handle resource restart
 AddEventHandler('onResourceStart', function(resourceName)
     if GetCurrentResourceName() ~= resourceName then return end
-    Wait(3000) -- Wait for server to fully initialize
+    Wait(3000)
     onPlayerLoaded()
 end)
-
----------------------------------------------------------------------------
--- OX_TARGET: Optional interaction for nearby players wearing backpacks
----------------------------------------------------------------------------
-
--- Players can look at someone wearing a backpack
--- This is optional; uncomment below to enable target interaction on other players
-
---[[
-exports.ox_target:addGlobalPlayer({
-    {
-        name = 'hbs_bags_look',
-        label = 'Look at Backpack',
-        icon = 'fas fa-eye',
-        distance = 2.5,
-        onSelect = function(data)
-            lib.notify({ title = 'Backpack', description = 'This player is wearing a backpack.', type = 'inform' })
-        end,
-    },
-})
---]]
 
 ---------------------------------------------------------------------------
 -- CLEANUP ON RESOURCE STOP
