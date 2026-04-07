@@ -288,18 +288,6 @@ openBackpackMenu = function(slot, metadata)
         end,
     }
 
-    -- Unequip current bag
-    if equippedBackpack then
-        menuOptions[#menuOptions + 1] = {
-            title = 'Unequip Current Backpack',
-            description = 'Remove your currently equipped backpack',
-            icon = 'arrow-down',
-            onSelect = function()
-                unequipBackpack()
-            end,
-        }
-    end
-
     -- Rename
     if Config.Rename.enabled then
         menuOptions[#menuOptions + 1] = {
