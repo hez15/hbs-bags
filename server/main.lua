@@ -199,37 +199,38 @@ local function ensureMetadata(source, slot, item)
 end
 
 ---------------------------------------------------------------------------
--- ITEM USE HANDLER (QBX / QBCore compatible)
+-- ITEM USE HANDLER
+-- ox_inventory triggers this export when a player uses a backpack item.
+-- Each item definition in ox_inventory must point here via:
+--   server = { export = 'hbs-bags.useBackpack' }
 ---------------------------------------------------------------------------
 
--- Register each backpack as a usable item via QBX Core
-for itemName, backpackCfg in pairs(Config.Backpacks) do
-    exports.qbx_core:CreateUseableItem(itemName, function(source, item)
-        local src = source
-        local slot = item.slot
+exports('useBackpack', function(event, item, inventory, slot, data)
+    local src = inventory.id or source
 
-        if isLocked(src) then
-            return notify(src, { title = 'Backpack', description = 'Please wait...', type = 'error' })
-        end
-        setLock(src)
+    if not item or not Config.BackpackItems[item.name] then return end
 
-        -- Validate item still exists at slot
-        local invItem = getItemAtSlot(src, slot)
-        if not invItem or invItem.name ~= itemName then
-            return notify(src, { title = 'Backpack', description = 'Item not found.', type = 'error' })
-        end
+    if isLocked(src) then
+        return notify(src, { title = 'Backpack', description = 'Please wait...', type = 'error' })
+    end
+    setLock(src)
 
-        -- Ensure metadata is complete
-        local meta = ensureMetadata(src, slot, invItem)
+    -- Validate item still exists at slot
+    local invItem = getItemAtSlot(src, slot)
+    if not invItem or not Config.BackpackItems[invItem.name] then
+        return notify(src, { title = 'Backpack', description = 'Item not found.', type = 'error' })
+    end
 
-        if not meta.backpackId then
-            return notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
-        end
+    -- Ensure metadata is complete
+    local meta = ensureMetadata(src, slot, invItem)
 
-        -- Send to client to open context menu
-        TriggerClientEvent('hbs-bags:client:openMenu', src, slot, meta)
-    end)
-end
+    if not meta.backpackId then
+        return notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
+    end
+
+    -- Send to client to open context menu
+    TriggerClientEvent('hbs-bags:client:openMenu', src, slot, meta)
+end)
 
 ---------------------------------------------------------------------------
 -- ANTI BAG-IN-BAG HOOKS (with fallback)
