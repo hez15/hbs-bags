@@ -1,9 +1,8 @@
 ---------------------------------------------------------------------------
--- ox_inventory server module (hooks, stash registration, etc.)
--- Using the Lua require method which is the standard for current ox_inventory
+-- SERVER
+-- Uses QBX/QBCore item registration instead of ox_inventory exports
+-- that may not exist in all ox_inventory versions.
 ---------------------------------------------------------------------------
-
-local ox_inv = exports.ox_inventory
 
 ---------------------------------------------------------------------------
 -- STATE
@@ -43,16 +42,45 @@ local function setLock(source)
     playerLocks[source] = GetGameTimer()
 end
 
+--- Get all items from a player's inventory (compatible across ox_inventory versions)
+---@param source number
+---@return table|nil
+local function getPlayerItems(source)
+    -- Try multiple export names for cross-version compat
+    local ok, items = pcall(function()
+        return exports.ox_inventory:GetInventoryItems(source)
+    end)
+    if ok and items then return items end
+
+    ok, items = pcall(function()
+        return exports.ox_inventory:GetInventory(source)
+    end)
+    if ok and items then
+        -- Some versions return { items = {...} }
+        if items.items then return items.items end
+        return items
+    end
+
+    return nil
+end
+
 --- Find a backpack item in the player's inventory by slot
 ---@param source number
 ---@param slot number
 ---@return table|nil
 local function getItemAtSlot(source, slot)
-    local items = ox_inv:GetInventoryItems(source)
+    -- Try GetSlot first (most reliable single-slot lookup)
+    local ok, item = pcall(function()
+        return exports.ox_inventory:GetSlot(source, slot)
+    end)
+    if ok and item and item.name then return item end
+
+    -- Fallback: iterate all items
+    local items = getPlayerItems(source)
     if not items then return nil end
-    for _, item in pairs(items) do
-        if item.slot == slot then
-            return item
+    for _, v in pairs(items) do
+        if v.slot == slot then
+            return v
         end
     end
     return nil
@@ -63,7 +91,7 @@ end
 ---@param backpackId string
 ---@return table|nil, number|nil
 local function findBackpackById(source, backpackId)
-    local items = ox_inv:GetInventoryItems(source)
+    local items = getPlayerItems(source)
     if not items then return nil, nil end
     for _, item in pairs(items) do
         if item.metadata and item.metadata.backpackId == backpackId then
@@ -105,7 +133,7 @@ local function registerStash(backpackId, backpackType, upgrades)
     local slots, weight = calculateStats(backpackType, upgrades or {})
     local stashId = Config.StashPrefix .. backpackId
 
-    ox_inv:RegisterStash(stashId, ('Backpack: %s'):format(backpackId), slots, weight)
+    exports.ox_inventory:RegisterStash(stashId, ('Backpack: %s'):format(backpackId), slots, weight)
 end
 
 --- Sanitize a user-provided string for naming
@@ -122,7 +150,14 @@ local function sanitizeString(input, maxLen)
     return clean
 end
 
---- Ensure backpack metadata is complete (called when item is used, in case it was created before this resource)
+--- Send a notification to a player (compatible with ox_lib v3+)
+---@param source number
+---@param data table
+local function notify(source, data)
+    TriggerClientEvent('ox_lib:notify', source, data)
+end
+
+--- Ensure backpack metadata is complete
 ---@param source number
 ---@param slot number
 ---@param item table
@@ -157,35 +192,38 @@ local function ensureMetadata(source, slot, item)
         if meta.customName then
             meta.description = meta.description .. (' | Name: %s'):format(meta.customName)
         end
-        ox_inv:SetMetadata(source, slot, meta)
+        exports.ox_inventory:SetMetadata(source, slot, meta)
     end
 
     return meta
 end
 
 ---------------------------------------------------------------------------
--- ITEM USE HANDLER
+-- ITEM USE HANDLER (QBX / QBCore compatible)
 ---------------------------------------------------------------------------
 
+-- Register each backpack as a usable item via QBX Core
 for itemName, backpackCfg in pairs(Config.Backpacks) do
-    ox_inv:RegisterUsableItem(itemName, function(source, slot, metadata)
+    exports.qbx_core:CreateUseableItem(itemName, function(source, item)
         local src = source
+        local slot = item.slot
+
         if isLocked(src) then
-            return lib.notify(src, { title = 'Backpack', description = 'Please wait...', type = 'error' })
+            return notify(src, { title = 'Backpack', description = 'Please wait...', type = 'error' })
         end
         setLock(src)
 
         -- Validate item still exists at slot
-        local item = getItemAtSlot(src, slot)
-        if not item or item.name ~= itemName then
-            return lib.notify(src, { title = 'Backpack', description = 'Item not found.', type = 'error' })
+        local invItem = getItemAtSlot(src, slot)
+        if not invItem or invItem.name ~= itemName then
+            return notify(src, { title = 'Backpack', description = 'Item not found.', type = 'error' })
         end
 
-        -- Ensure metadata is complete (handles items created before resource was installed)
-        local meta = ensureMetadata(src, slot, item)
+        -- Ensure metadata is complete
+        local meta = ensureMetadata(src, slot, invItem)
 
         if not meta.backpackId then
-            return lib.notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
+            return notify(src, { title = 'Backpack', description = 'Invalid backpack.', type = 'error' })
         end
 
         -- Send to client to open context menu
@@ -194,109 +232,75 @@ for itemName, backpackCfg in pairs(Config.Backpacks) do
 end
 
 ---------------------------------------------------------------------------
--- ANTI BAG-IN-BAG: Event-based detection
--- Block backpacks from being moved into backpack stashes only.
--- Normal stashes (house, trunk, etc.) are allowed.
+-- ANTI BAG-IN-BAG HOOKS (with fallback)
+-- Try multiple hook registration methods for ox_inventory compatibility.
 ---------------------------------------------------------------------------
 
--- Listen for inventory item moves and block backpacks going into backpack stashes
-AddEventHandler('ox_inventory:itemMoved', function(source, fromInv, toInv, fromSlot, toSlot)
-    -- This is a post-move event; for pre-move blocking we use the approach below
-end)
+local function createSwapHandler(payload)
+    -- Check if a backpack item is being moved INTO a backpack stash
+    local itemName = payload.fromSlot and payload.fromSlot.name
+    if itemName and Config.BackpackItems[itemName] then
+        local toInv = payload.toInventory
+        if type(toInv) == 'string' and toInv:find('^' .. Config.StashPrefix) then
+            return false
+        end
+    end
 
--- Use the event-based hook system: ox_inventory emits 'ox_inventory:swapItems'
--- For versions that support exports-based hooks, we try that; otherwise we use event-based
-local hookRegistered = false
+    -- Check reverse direction for swaps
+    local toItemName = payload.toSlot and payload.toSlot.name
+    if toItemName and Config.BackpackItems[toItemName] then
+        local fromInv = payload.fromInventory
+        if type(fromInv) == 'string' and fromInv:find('^' .. Config.StashPrefix) then
+            return false
+        end
+    end
 
--- Try the newer module-based hook registration
-local success = pcall(function()
-    exports.ox_inventory:registerHook('swapItems', function(payload)
-        -- Check if a backpack item is being moved INTO a backpack stash
-        local itemName = payload.fromSlot and payload.fromSlot.name
+    -- Detect equipped backpack leaving player inventory → auto unequip
+    local src = payload.source
+    if src and equippedBags[src] then
+        local equipped = equippedBags[src]
         if itemName and Config.BackpackItems[itemName] then
-            local toInv = payload.toInventory
-            if type(toInv) == 'string' and toInv:find('^' .. Config.StashPrefix) then
-                return false
-            end
-        end
-
-        -- Check reverse direction for swaps
-        local toItemName = payload.toSlot and payload.toSlot.name
-        if toItemName and Config.BackpackItems[toItemName] then
-            local fromInv = payload.fromInventory
-            if type(fromInv) == 'string' and fromInv:find('^' .. Config.StashPrefix) then
-                return false
-            end
-        end
-
-        -- Detect equipped backpack leaving player inventory → auto unequip
-        local src = payload.source
-        if src and equippedBags[src] then
-            local equipped = equippedBags[src]
-            if itemName and Config.BackpackItems[itemName] then
-                local itemMeta = payload.fromSlot and payload.fromSlot.metadata
-                if itemMeta and itemMeta.backpackId == equipped.backpackId then
-                    local toType = payload.toType
-                    if toType ~= 'player' or payload.toInventory ~= payload.fromInventory then
-                        equippedBags[src] = nil
-                        TriggerClientEvent('hbs-bags:client:forceUnequip', src)
-                    end
+            local itemMeta = payload.fromSlot and payload.fromSlot.metadata
+            if itemMeta and itemMeta.backpackId == equipped.backpackId then
+                local toType = payload.toType
+                if toType ~= 'player' or payload.toInventory ~= payload.fromInventory then
+                    equippedBags[src] = nil
+                    TriggerClientEvent('hbs-bags:client:forceUnequip', src)
                 end
             end
         end
+    end
 
-        return true
-    end, {})
-    hookRegistered = true
-end)
-
--- If lowercase registerHook failed, try PascalCase RegisterHook
-if not hookRegistered then
-    pcall(function()
-        exports.ox_inventory:RegisterHook('swapItems', function(payload)
-            local itemName = payload.fromSlot and payload.fromSlot.name
-            if itemName and Config.BackpackItems[itemName] then
-                local toInv = payload.toInventory
-                if type(toInv) == 'string' and toInv:find('^' .. Config.StashPrefix) then
-                    return false
-                end
-            end
-
-            local toItemName = payload.toSlot and payload.toSlot.name
-            if toItemName and Config.BackpackItems[toItemName] then
-                local fromInv = payload.fromInventory
-                if type(fromInv) == 'string' and fromInv:find('^' .. Config.StashPrefix) then
-                    return false
-                end
-            end
-
-            local src = payload.source
-            if src and equippedBags[src] then
-                local equipped = equippedBags[src]
-                if itemName and Config.BackpackItems[itemName] then
-                    local itemMeta = payload.fromSlot and payload.fromSlot.metadata
-                    if itemMeta and itemMeta.backpackId == equipped.backpackId then
-                        local toType = payload.toType
-                        if toType ~= 'player' or payload.toInventory ~= payload.fromInventory then
-                            equippedBags[src] = nil
-                            TriggerClientEvent('hbs-bags:client:forceUnequip', src)
-                        end
-                    end
-                end
-            end
-
-            return true
-        end, {})
-        hookRegistered = true
-    end)
+    return true
 end
 
-if hookRegistered then
-    print('^2[hbs-bags]^0 Swap hook registered via export.')
-else
-    -- Fallback: no hook available, log warning
-    print('^1[hbs-bags]^0 WARNING: Could not register swapItems hook. Bag-in-bag prevention and auto-unequip on item removal may not work.')
-    print('^1[hbs-bags]^0 Ensure ox_inventory is up to date and supports registerHook exports.')
+local hookRegistered = false
+
+-- Method 1: lowercase registerHook (ox_inventory v2.38+)
+if not hookRegistered then
+    local ok = pcall(function()
+        exports.ox_inventory:registerHook('swapItems', createSwapHandler, {})
+    end)
+    if ok then
+        hookRegistered = true
+        print('^2[hbs-bags]^0 Swap hook registered (registerHook).')
+    end
+end
+
+-- Method 2: PascalCase RegisterHook
+if not hookRegistered then
+    local ok = pcall(function()
+        exports.ox_inventory:RegisterHook('swapItems', createSwapHandler, {})
+    end)
+    if ok then
+        hookRegistered = true
+        print('^2[hbs-bags]^0 Swap hook registered (RegisterHook).')
+    end
+end
+
+if not hookRegistered then
+    print('^1[hbs-bags]^0 WARNING: Could not register swapItems hook.')
+    print('^1[hbs-bags]^0 Bag-in-bag prevention requires ox_inventory with hook support.')
 end
 
 ---------------------------------------------------------------------------
@@ -320,12 +324,10 @@ lib.callback.register('hbs-bags:server:equip', function(source, slot)
         return false, 'Invalid backpack metadata.'
     end
 
-    -- Check durability
     if meta.durability and meta.durability <= 0 then
         return false, 'This backpack is broken. Repair it first.'
     end
 
-    -- Check if already wearing a different backpack
     local current = equippedBags[src]
     if current then
         if current.backpackId == meta.backpackId then
@@ -334,14 +336,12 @@ lib.callback.register('hbs-bags:server:equip', function(source, slot)
         return false, 'Unequip your current backpack first.'
     end
 
-    -- Store equipped state server-side
     equippedBags[src] = {
         slot = slot,
         backpackId = meta.backpackId,
         backpackType = meta.backpackType or item.name,
     }
 
-    -- Register stash so it's ready
     registerStash(meta.backpackId, meta.backpackType or item.name, meta.upgrades or {})
 
     return true, meta.backpackType or item.name
@@ -429,7 +429,7 @@ lib.callback.register('hbs-bags:server:rename', function(source, slot, newName)
         clean
     )
 
-    ox_inv:SetMetadata(src, slot, meta)
+    exports.ox_inventory:SetMetadata(src, slot, meta)
     return true, clean
 end)
 
@@ -454,12 +454,12 @@ lib.callback.register('hbs-bags:server:repair', function(source, slot)
         return false, 'Backpack is already at full durability.'
     end
 
-    local repairCount = ox_inv:GetItemCount(src, Config.Repair.item)
+    local repairCount = exports.ox_inventory:GetItemCount(src, Config.Repair.item)
     if not repairCount or repairCount < 1 then
         return false, 'You need a ' .. Config.Repair.item .. '.'
     end
 
-    local removed = ox_inv:RemoveItem(src, Config.Repair.item, 1)
+    local removed = exports.ox_inventory:RemoveItem(src, Config.Repair.item, 1)
     if not removed then
         return false, 'Failed to consume repair kit.'
     end
@@ -473,7 +473,7 @@ lib.callback.register('hbs-bags:server:repair', function(source, slot)
         meta.description = meta.description .. (' | Name: %s'):format(meta.customName)
     end
 
-    ox_inv:SetMetadata(src, slot, meta)
+    exports.ox_inventory:SetMetadata(src, slot, meta)
     return true, meta.durability
 end)
 
@@ -504,12 +504,12 @@ lib.callback.register('hbs-bags:server:upgrade', function(source, slot, upgradeK
         return false, ('Max upgrades reached (%d/%d).'):format(currentCount, upgradeCfg.maxApplications)
     end
 
-    local upgradeItemCount = ox_inv:GetItemCount(src, upgradeCfg.item)
+    local upgradeItemCount = exports.ox_inventory:GetItemCount(src, upgradeCfg.item)
     if not upgradeItemCount or upgradeItemCount < 1 then
         return false, ('You need a %s.'):format(upgradeCfg.label)
     end
 
-    local removed = ox_inv:RemoveItem(src, upgradeCfg.item, 1)
+    local removed = exports.ox_inventory:RemoveItem(src, upgradeCfg.item, 1)
     if not removed then
         return false, 'Failed to consume upgrade item.'
     end
@@ -538,7 +538,7 @@ lib.callback.register('hbs-bags:server:upgrade', function(source, slot, upgradeK
         meta.description = meta.description .. (' | +%d slots, +%dg capacity'):format(totalAddSlots, totalAddWeight)
     end
 
-    ox_inv:SetMetadata(src, slot, meta)
+    exports.ox_inventory:SetMetadata(src, slot, meta)
 
     registerStash(meta.backpackId, meta.backpackType or item.name, upgrades)
 
