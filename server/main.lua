@@ -236,10 +236,23 @@ end
 -- Try multiple hook registration methods for ox_inventory compatibility.
 ---------------------------------------------------------------------------
 
+--- Safely extract item name from a hook slot field
+--- In some ox_inventory versions fromSlot/toSlot are tables, in others they're numbers
+---@param slotData any
+---@return string|nil name, table|nil metadata
+local function getSlotInfo(slotData)
+    if type(slotData) == 'table' then
+        return slotData.name, slotData.metadata
+    end
+    return nil, nil
+end
+
 local function createSwapHandler(payload)
+    local fromName, fromMeta = getSlotInfo(payload.fromSlot)
+    local toName, _ = getSlotInfo(payload.toSlot)
+
     -- Check if a backpack item is being moved INTO a backpack stash
-    local itemName = payload.fromSlot and payload.fromSlot.name
-    if itemName and Config.BackpackItems[itemName] then
+    if fromName and Config.BackpackItems[fromName] then
         local toInv = payload.toInventory
         if type(toInv) == 'string' and toInv:find('^' .. Config.StashPrefix) then
             return false
@@ -247,8 +260,7 @@ local function createSwapHandler(payload)
     end
 
     -- Check reverse direction for swaps
-    local toItemName = payload.toSlot and payload.toSlot.name
-    if toItemName and Config.BackpackItems[toItemName] then
+    if toName and Config.BackpackItems[toName] then
         local fromInv = payload.fromInventory
         if type(fromInv) == 'string' and fromInv:find('^' .. Config.StashPrefix) then
             return false
@@ -259,9 +271,8 @@ local function createSwapHandler(payload)
     local src = payload.source
     if src and equippedBags[src] then
         local equipped = equippedBags[src]
-        if itemName and Config.BackpackItems[itemName] then
-            local itemMeta = payload.fromSlot and payload.fromSlot.metadata
-            if itemMeta and itemMeta.backpackId == equipped.backpackId then
+        if fromName and Config.BackpackItems[fromName] and fromMeta then
+            if fromMeta.backpackId == equipped.backpackId then
                 local toType = payload.toType
                 if toType ~= 'player' or payload.toInventory ~= payload.fromInventory then
                     equippedBags[src] = nil
