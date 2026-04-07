@@ -454,9 +454,12 @@ end)
 ---------------------------------------------------------------------------
 
 local function onPlayerLoaded()
-    -- Check if we had a backpack equipped (server-authoritative)
-    local data = lib.callback.await('hbs-bags:server:getEquipped', false)
-    if data then
+    -- Wait for server callbacks to be registered
+    Wait(2000)
+
+    -- Safely attempt to restore equipped state
+    local ok, data = pcall(lib.callback.await, 'hbs-bags:server:getEquipped', false)
+    if ok and data then
         equippedBackpack = {
             slot = data.slot,
             backpackType = data.backpackType,
@@ -475,7 +478,7 @@ RegisterNetEvent('QBCore:Client:OnPlayerLoaded', onPlayerLoaded)
 -- Also handle resource restart
 AddEventHandler('onResourceStart', function(resourceName)
     if GetCurrentResourceName() ~= resourceName then return end
-    Wait(1000) -- Wait for player data to be available
+    Wait(3000) -- Wait for server to fully initialize
     onPlayerLoaded()
 end)
 
