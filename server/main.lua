@@ -605,26 +605,20 @@ end)
 
 ---------------------------------------------------------------------------
 -- NETWORKED VISUAL SYNC
+-- GTA automatically networks SetPedComponentVariation on the owning
+-- player's ped. The syncVisual event is only kept as server state
+-- tracking. requestAllVisuals is for late-joiners who may have missed
+-- the initial clothing change due to streaming distance.
 ---------------------------------------------------------------------------
 
 RegisterNetEvent('hbs-bags:server:syncVisual', function(backpackType, equipped)
-    local src = source
-
-    if equipped then
-        if not equippedBags[src] then return end
-        if equippedBags[src].backpackType ~= backpackType then return end
-    end
-
-    TriggerClientEvent('hbs-bags:client:applyVisual', -1, src, backpackType, equipped)
+    -- Server state is already tracked in equippedBags via the use handler.
+    -- No broadcast needed — GTA networks ped clothing natively.
 end)
 
 RegisterNetEvent('hbs-bags:server:requestAllVisuals', function()
-    local src = source
-    for playerId, data in pairs(equippedBags) do
-        if playerId ~= src and GetPlayerPed(playerId) ~= 0 then
-            TriggerClientEvent('hbs-bags:client:applyVisual', src, playerId, data.backpackType, true)
-        end
-    end
+    -- No-op: GTA already networks the owning player's ped clothing.
+    -- Late-joiners will see clothing from the GTA networking layer.
 end)
 
 ---------------------------------------------------------------------------

@@ -104,7 +104,6 @@ local function unequipBackpack()
     removeBagClothing()
     equippedBackpack = nil
 
-    TriggerServerEvent('hbs-bags:server:syncVisual', prevType, false)
     lib.notify({ title = 'Backpack', description = 'Backpack unequipped.', type = 'success' })
 end
 
@@ -114,7 +113,6 @@ RegisterNetEvent('hbs-bags:client:forceUnequip', function()
         local prevType = equippedBackpack.backpackType
         removeBagClothing()
         equippedBackpack = nil
-        TriggerServerEvent('hbs-bags:server:syncVisual', prevType, false)
         lib.notify({ title = 'Backpack', description = 'Backpack automatically unequipped.', type = 'inform' })
     end
 end)
@@ -133,7 +131,6 @@ RegisterNetEvent('hbs-bags:client:equipAndMenu', function(slot, backpackType, me
 
     equippedBackpack = { slot = slot, backpackType = backpackType }
 
-    TriggerServerEvent('hbs-bags:server:syncVisual', backpackType, true)
     lib.notify({ title = 'Backpack', description = 'Backpack equipped.', type = 'success' })
 
     Wait(300)
@@ -353,41 +350,6 @@ RegisterNetEvent('hbs-bags:client:openMenu', function(slot, metadata)
     openBackpackMenu(slot, metadata)
 end)
 
----------------------------------------------------------------------------
--- NETWORKED VISUAL SYNC: Apply visual for any player
----------------------------------------------------------------------------
-
-RegisterNetEvent('hbs-bags:client:applyVisual', function(playerId, backpackType, equipped)
-    local targetPed = GetPlayerPed(GetPlayerFromServerId(playerId))
-    if not targetPed or targetPed == 0 then return end
-
-    local cfg = Config.Backpacks[backpackType]
-    if not cfg then return end
-
-    if equipped then
-        local gender
-        local model = GetEntityModel(targetPed)
-        if model == `mp_m_freemode_01` then
-            gender = 'male'
-        else
-            gender = 'female'
-        end
-
-        local clothes = gender == 'male' and cfg.male or cfg.female
-        SetPedComponentVariation(targetPed, Config.BagComponent, clothes.drawable, clothes.texture, 0)
-    else
-        local gender
-        local model = GetEntityModel(targetPed)
-        if model == `mp_m_freemode_01` then
-            gender = 'male'
-        else
-            gender = 'female'
-        end
-
-        local defaults = Config.DefaultClothing[gender]
-        SetPedComponentVariation(targetPed, Config.BagComponent, defaults.drawable, defaults.texture, 0)
-    end
-end)
 
 ---------------------------------------------------------------------------
 -- PLAYER LOAD: Restore equipped state and request other players' visuals
@@ -406,7 +368,6 @@ local function onPlayerLoaded()
         applyBagClothing(data.backpackType)
     end
 
-    TriggerServerEvent('hbs-bags:server:requestAllVisuals')
 end
 
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', onPlayerLoaded)
