@@ -157,6 +157,30 @@ local function notify(source, data)
     TriggerClientEvent('ox_lib:notify', source, data)
 end
 
+--- Check if a player's job is in the allowed list for a backpack
+---@param source number
+---@param backpackType string
+---@return boolean allowed, string|nil errorMessage
+local function checkJobAccess(source, backpackType)
+    local cfg = Config.Backpacks[backpackType]
+    if not cfg or not cfg.jobs then return true, nil end
+
+    -- Get player job from QBX Core
+    local player = exports.qbx_core:GetPlayer(source)
+    if not player then return false, 'Could not verify job.' end
+
+    local playerJob = player.PlayerData and player.PlayerData.job and player.PlayerData.job.name
+    if not playerJob then return false, 'Could not verify job.' end
+
+    for _, allowedJob in ipairs(cfg.jobs) do
+        if playerJob == allowedJob then
+            return true, nil
+        end
+    end
+
+    return false, 'You do not have permission to use this backpack.'
+end
+
 --- Ensure backpack metadata is complete
 ---@param source number
 ---@param slot number
@@ -240,6 +264,12 @@ exports('useBackpack', function(event, item, inventory, slot, data)
     -- Auto-equip if not already equipped, then show menu
     local current = equippedBags[src]
     local backpackType = meta.backpackType or invItem.name
+
+    -- Job lock check
+    local allowed, jobErr = checkJobAccess(src, backpackType)
+    if not allowed then
+        return notify(src, { title = 'Backpack', description = jobErr, type = 'error' })
+    end
 
     if not current then
         -- Durability check
@@ -388,6 +418,12 @@ lib.callback.register('hbs-bags:server:openStash', function(source, slot)
 
     if not meta.backpackId then
         return false, 'Invalid backpack.'
+    end
+
+    -- Job lock check
+    local allowed, jobErr = checkJobAccess(src, meta.backpackType or item.name)
+    if not allowed then
+        return false, jobErr
     end
 
     if meta.durability and meta.durability <= 0 then

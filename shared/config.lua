@@ -33,6 +33,41 @@ Config.Backpacks = {
         allowUnequip = true,
         toggleUse = true,
     },
+
+    -- Job-locked bags
+    ems_backpack = {
+        item = 'ems_backpack',
+        label = 'EMS Medical Bag',
+        slots = 30,
+        weight = 40000,
+        male = { drawable = 45, texture = 3 },
+        female = { drawable = 45, texture = 3 },
+        allowUnequip = true,
+        toggleUse = true,
+        jobs = { 'ambulance', 'ems' },   -- only these jobs can equip
+    },
+    fire_backpack = {
+        item = 'fire_backpack',
+        label = 'Fire Rescue Bag',
+        slots = 30,
+        weight = 40000,
+        male = { drawable = 45, texture = 4 },
+        female = { drawable = 45, texture = 4 },
+        allowUnequip = true,
+        toggleUse = true,
+        jobs = { 'fire', 'firefighter' },
+    },
+    pd_backpack = {
+        item = 'pd_backpack',
+        label = 'Police Tactical Bag',
+        slots = 30,
+        weight = 40000,
+        male = { drawable = 45, texture = 5 },
+        female = { drawable = 45, texture = 5 },
+        allowUnequip = true,
+        toggleUse = true,
+        jobs = { 'police', 'sheriff', 'sasp' },
+    },
 }
 
 -- Build a flat set of all backpack item names for fast lookups
